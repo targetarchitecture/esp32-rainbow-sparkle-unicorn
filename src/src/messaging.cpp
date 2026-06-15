@@ -80,13 +80,12 @@ void dealWithMessage(std::string message)
     }
     else if (identifier.compare("ROTARY1") == 0)
     {
-        std::string requestMessage = "ROTARY1:" + std::to_string(encoder1Count);
-
-        sendToMicrobit(requestMessage);
+        std::string requestMessage = "ROTARY1:" + std::to_string(encoder1.getCount());
+    sendToMicrobit(requestMessage);
     }
     else if (identifier.compare("ROTARY2") == 0)
     {
-        std::string requestMessage = "ROTARY2:" + std::to_string(encoder2Count);
+        std::string requestMessage = "ROTARY2:" + std::to_string(encoder2.getCount());
 
         sendToMicrobit(requestMessage);
     }
