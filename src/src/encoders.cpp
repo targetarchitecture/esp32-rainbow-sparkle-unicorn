@@ -1,8 +1,6 @@
 #include <Arduino.h>
 #include "encoders.h"
 
-TaskHandle_t EncodersTask;
-
 ESP32Encoder encoder1;
 ESP32Encoder encoder2;
 
@@ -23,32 +21,4 @@ void encoders_setup()
     encoder2.attachHalfQuad(ROTARY2CK, ROTARY2DT);
     encoder2.clearCount();
     encoder2.setCount(0);
-
-    //start task to read an send rotary information every 500ms (uxTaskGetStackHighWaterMark = 1560)
-    xTaskCreatePinnedToCore(
-        &encoders_task,
-        "encoders_task",
-        2048,
-        NULL,
-        encoders_task_Priority,
-        &EncodersTask,
-        1);
-}
-
-void encoders_task(void *pvParameter)
-{
-    // UBaseType_t uxHighWaterMark;
-    // uxHighWaterMark = uxTaskGetStackHighWaterMark(NULL);
-    // Serial.print("encoders_task uxTaskGetStackHighWaterMark:");
-    // Serial.println(uxHighWaterMark);
-
-    for (;;)
-    {
-        encoder1Count = encoder1.getCount();
-        encoder2Count = encoder2.getCount();
-
-        delay(500);
-    }
-
-    vTaskDelete(NULL);
 }
