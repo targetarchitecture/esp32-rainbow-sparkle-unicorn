@@ -83,36 +83,21 @@ void switch_task(void *pvParameters)
 //function to set the device and set the array
 std::string readAndSetSwitchArray()
 {
-    //wait for the i2c semaphore flag to become available
     xSemaphoreTake(i2cSemaphore, portMAX_DELAY);
+    
+    // Read all 16 pins in one single I2C bus transaction
+    uint16_t pinDataWord = switches.readWord(0x12); // 0x12 is REG_DATA_B/A base
 
-    checkI2Cerrors("switch (switch_task start)");
-
-    //quickly read all of the pins and save the state
-    for (size_t i = 0; i < 16; i++)
-    {
-        switchArray[i] = switches.digitalRead(i);
-    }
-
-    checkI2Cerrors("switch (switch_task end)");
-
-    //give back the i2c flag for the next task
     xSemaphoreGive(i2cSemaphore);
 
-    //build the switch states string
-    std::string swithStates;
-
+    std::string switchStates = "";
     for (size_t i = 0; i < 16; i++)
     {
-        if (switchArray[i] == LOW)
-        {
-            swithStates.append("L");
-        }
-        else
-        {
-            swithStates.append("H");
-        }
+        // Extract bit status
+        bool isLow = (pinDataWord & (1 << i)) == 0;
+        switchArray[i] = isLow ? LOW : HIGH;
+        switchStates.append(isLow ? "L" : "H");
     }
 
-    return swithStates;
+    return switchStates;
 }
