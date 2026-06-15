@@ -52,6 +52,7 @@ void microbit_receive_task(void *pvParameters)
 
     uart_event_t uart_event;
     uint8_t *received_buffer = (uint8_t *)malloc(RX_BUF_SIZE);
+    std::string accumulation_buffer = "";
 
     std::string receivedMsg;
 
@@ -65,25 +66,24 @@ void microbit_receive_task(void *pvParameters)
             {
             case UART_DATA:
             {
-                // Serial << " UART_DATA uart_event.size:" << uart_event.size << endl;
 
-                ESP_LOGI(TAG, "UART_DATA");
-                uart_read_bytes(UART_NUM_2, received_buffer, uart_event.size, portMAX_DELAY);
-
-                receivedMsg.clear();
-
-                for (size_t i = 0; i < uart_event.size; i++)
+                int len = uart_read_bytes(UART_NUM_2, received_buffer, uart_event.size, portMAX_DELAY);
+                for (int i = 0; i < len; i++)
                 {
-                    char c = received_buffer[i]; // receive byte as a character
-
-                    receivedMsg += c;
+                    char c = (char)received_buffer[i];
+                    if (c == '\n')
+                    {
+                        if (!accumulation_buffer.empty())
+                        {
+                            dealWithMessage(accumulation_buffer);
+                            accumulation_buffer.clear();
+                        }
+                    }
+                    else if (c != '\r') // Strip carriage returns if present
+                    {
+                        accumulation_buffer += c;
+                    }
                 }
-
-#if SHOW_SERIAL
-                Serial << "RX (UART_DATA):" << receivedMsg.c_str() << endl;
-#endif
-
-                dealWithMessage(receivedMsg);
             }
             break;
             case UART_BREAK:
@@ -157,6 +157,7 @@ void microbit_receive_task(void *pvParameters)
         }
     }
 
+    free(received_buffer);
     vTaskDelete(NULL);
 }
 
