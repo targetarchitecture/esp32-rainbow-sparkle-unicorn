@@ -8,158 +8,110 @@ Mode 3: Files in /mp3 directory: Uses FOUR digit files (0001.mp3) names played i
 */
 
 DFRobotDFPlayerMini sound;
-
 TaskHandle_t SoundTask;
-TaskHandle_t SoundBusyTask;
 
-const int commandPause = 50;
+// Non-blocking communication delay threshold parameter
+const uint32_t COMMAND_GUARD_PERIOD_MS = 50; 
+static uint32_t lastCommandTimestamp = 0;
+
+static void enforceNonBlockingGuard()
+{
+    uint32_t now = millis();
+    uint32_t elapsed = now - lastCommandTimestamp;
+    if (elapsed < COMMAND_GUARD_PERIOD_MS)
+    {
+        vTaskDelay(pdMS_TO_TICKS(COMMAND_GUARD_PERIOD_MS - elapsed));
+    }
+    lastCommandTimestamp = millis();
+}
 
 void sound_setup()
 {
-    //set-up the interupt
-    pinMode(DFPLAYER_BUSY, INPUT);
+    pinMode(DFPLAYER_BUSY, INPUT); // Audio playing = LOW, Audio idle = HIGH
 
     xTaskCreatePinnedToCore(
-        sound_task,          /* Task function. */
-        "Sound Task",        /* name of task. */
-        3000,                /* Stack size of task (uxTaskGetStackHighWaterMark:11708) */
-        NULL,                /* parameter of the task */
-        sound_task_Priority, /* priority of the task */
-        &SoundTask, 1);      /* Task handle to keep track of created task */
-
-    xTaskCreatePinnedToCore(
-        sound_busy_task,
-        "Busy Task",
-        3000,
-        NULL,
-        sound_busy_task_Priority,
-        &SoundBusyTask,
-        1);
-}
-
-void sound_busy_task(void *pvParameter)
-{
-    // UBaseType_t uxHighWaterMark;
-    // uxHighWaterMark = uxTaskGetStackHighWaterMark(NULL);
-    // Serial.print("busy_task uxTaskGetStackHighWaterMark:");
-    // Serial.println(uxHighWaterMark);
-
-    //int BusyPin = digitalRead(DFPLAYER_BUSY);
-
-    int PreviousBusy = 1;
-
-    for (;;)
-    {
-        int BusyPin = digitalRead(DFPLAYER_BUSY);
-
-        if (BusyPin != PreviousBusy)
-        {
-            // Serial << "BusyPin=" << BusyPin << endl;
-
-            if (BusyPin == LOW)
-            {
-                sendToMicrobit("SBUSY:1");
-            }
-            else
-            {
-                sendToMicrobit("SBUSY:0");
-            }
-        }
-
-        PreviousBusy = BusyPin;
-
-        delay(500);
-    }
-
-    vTaskDelete(NULL);
+        sound_task,          
+        "Sound Task",        
+        4096,                // Clean stable stack ceiling
+        NULL,                
+        sound_task_Priority, 
+        &SoundTask, 
+        1);      
 }
 
 void sound_task(void *pvParameters)
 {
-    /* Inspect our own high water mark on entering the task. */
-    // UBaseType_t uxHighWaterMark;
-    // uxHighWaterMark = uxTaskGetStackHighWaterMark(NULL);
-    // Serial.print("sound_task uxTaskGetStackHighWaterMark:");
-    // Serial.println(uxHighWaterMark);
-
-    //Configure serial port pins and busy pin
-    pinMode(DFPLAYER_BUSY, INPUT);
-
-    //set up UART
     Serial1.begin(9600, SERIAL_8N1, DFPLAYER_RX, DFPLAYER_TX);
-
-    //Configure serial port pins and busy pin
+    
+    // Initialize DFPlayer interface setup parameters safely
     sound.begin(Serial1, true, true);
-    sound.setTimeOut(750); //Set serial communication time out 750ms
+    sound.setTimeOut(750); 
     sound.outputDevice(DFPLAYER_DEVICE_SD);
+
+    int previousBusyState = 1;
 
     for (;;)
     {
         messageParts parts;
 
-        //wait for new music command in the queue
-        xQueueReceive(Sound_Queue, &parts, portMAX_DELAY);
-
-        std::string identifier = parts.identifier;
-
-        //Serial.print("xQueueReceive Sound_Queue:");
-        //Serial.println(identifier.c_str());
-
-        if (identifier.compare("SVOL") == 0)
+        // Use short non-blocking check time limit to service status flags concurrently
+        if (xQueueReceive(Sound_Queue, &parts, pdMS_TO_TICKS(30)) == pdTRUE)
         {
-            auto volume = parts.value1;
-            volume = constrain(volume, 0, 30);
+            std::string identifier = parts.identifier;
 
-            // Serial.print("vol:");
-            // Serial.println(volume);
-
-            delay(commandPause);
-            sound.volume(volume);
-            delay(commandPause);
+            if (identifier.compare("SVOL") == 0)
+            {
+                uint32_t volume = constrain(parts.value1, 0, 30);
+                enforceNonBlockingGuard();
+                sound.volume(volume);
+            }
+            else if (identifier.compare("SFILECOUNT") == 0)
+            {
+                enforceNonBlockingGuard();
+                int fileCount = sound.readFileCounts();
+                if (fileCount >= 0)
+                {
+                    sendToMicrobit("FILECOUNT:" + std::to_string(fileCount));
+                }
+            }
+            else if (identifier.compare("SPLAY") == 0)
+            {
+                uint32_t folderNum = constrain(parts.value1, 1, 99);
+                uint32_t trackNum = constrain(parts.value2, 1, 999);
+                enforceNonBlockingGuard();
+                sound.playFolder(folderNum, trackNum);
+            }
+            else if (identifier.compare("SPAUSE") == 0)
+            {
+                enforceNonBlockingGuard();
+                sound.pause();
+            }
+            else if (identifier.compare("SRESUME") == 0)
+            {
+                enforceNonBlockingGuard();
+                sound.start();
+            }
+            else if (identifier.compare("SSTOP") == 0)
+            {
+                enforceNonBlockingGuard();
+                sound.stop();
+            }
         }
-        if (identifier.compare("SFILECOUNT") == 0)
+
+        // Integrated High-Speed Busy Pin Monitoring Layer (Destroys legacy background task thread)
+        int currentBusyState = digitalRead(DFPLAYER_BUSY);
+        if (currentBusyState != previousBusyState)
         {
-            //Serial.println("HI");
-
-            delay(commandPause);
-            auto fileCount = sound.readFileCounts();
-            delay(commandPause);
-
-            std::string requestMessage = "FILECOUNT:" + std::to_string(fileCount);
-
-            sendToMicrobit(requestMessage);
-        }
-        else if (identifier.compare("SPLAY") == 0)
-        {
-            //Serial << "identifier:" << identifier.c_str() << " folder:" << parts.value1 << " track:" << parts.value2 << endl;
-
-            auto folderNum = parts.value1;
-            folderNum = constrain(folderNum, 1, 99);
-
-            auto trackNum = parts.value2;
-            trackNum = constrain(trackNum, 1, 999);
-
-            delay(commandPause);
-            sound.playFolder(folderNum, trackNum);
-            delay(commandPause);
-        }
-        else if (identifier.compare("SPAUSE") == 0)
-        {
-            delay(commandPause);
-            sound.pause();
-            delay(commandPause);
-        }
-        else if (identifier.compare("SRESUME") == 0)
-        {
-            delay(commandPause);
-            sound.start();
-            delay(commandPause);
-        }
-        else if (identifier.compare("SSTOP") == 0)
-        {
-            delay(commandPause);
-            sound.stop();
-            delay(commandPause);
+            // Low transition signal means unit commenced audio playback
+            if (currentBusyState == LOW)
+            {
+                sendToMicrobit("SBUSY:1");
+            }
+            else // High logic transition signals file read completion tracking loop
+            {
+                sendToMicrobit("SBUSY:0");
+            }
+            previousBusyState = currentBusyState;
         }
     }
 
