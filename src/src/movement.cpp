@@ -231,7 +231,11 @@ void setServoEase(const uint8_t pin, easingCurves easingCurve, const uint16_t to
     // Serial << "maxPulse:" << maxPulse << endl;
     // Serial << "easingCurve:" << easingCurve << endl;
 
-    const char *taskName = "Servo Task " + pin;
+    // Create a local char array buffer (16 bytes matches the default FreeRTOS limit)
+    char taskName[16];
+    
+    // Safely write a formatted string ("Servo_0", "Servo_1", etc.) into the buffer
+    snprintf(taskName, sizeof(taskName), "Servo Task %d", pin);
 
     xTaskCreatePinnedToCore(
         &ServoEasingTaskV3,
