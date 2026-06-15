@@ -59,7 +59,7 @@ void touch_task(void *pvParameter)
         delay(100);
 
         // read and set array returning the current touched
-        auto currtouched = readAndSetTouchArray();
+      readAndSetTouchArray();
 
     }
 
