@@ -89,24 +89,20 @@ void setup()
 
 void POST(uint8_t flashes)
 {
-  //TODO: debate which tasks need stopping?
-  vTaskSuspendAll(); //added on 31/1/21
-
-  //take back control of LED
+  vTaskSuspendAll(); 
   POSTerror = true;
-
-  uint32_t speed = 150;
+  uint32_t speed_us = 150 * 1000; // Convert ms to microseconds
 
   for (;;)
   {
     for (size_t i = 0; i < flashes; i++)
     {
       digitalWrite(ONBOARDLED, HIGH);
-      delay(speed);
+      esp_rom_delay_us(speed_us);
       digitalWrite(ONBOARDLED, LOW);
-      delay(speed);
+      esp_rom_delay_us(speed_us);
     }
-    delay(1000);
+    esp_rom_delay_us(1000 * 1000);
   }
 }
 
