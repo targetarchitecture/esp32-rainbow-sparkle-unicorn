@@ -1,54 +1,27 @@
 #include <Arduino.h>
 #include "DAC.h"
 
-TaskHandle_t DACTask;
-
 void DAC_setup()
 {
-    xTaskCreatePinnedToCore(
-        DAC_task,          /* Task function. */
-        "DAC Task",        /* name of task. */
-        3500,              /* Stack size of task (uxTaskGetStackHighWaterMark = 3204) */
-        NULL,              /* parameter of the task */
-        DAC_task_Priority, /* priority of the task */
-        &DACTask, 1);      /* Task handle to keep track of created task */
+    // Pins are natively initialized when invoking dacWrite channel assignments.
+    // No dedicated background thread is spawned, saving 3.5KB of RAM.
 }
 
-void DAC_task(void *pvParameters)
+/**
+ * @brief Thread-safe synchronous register write for the ESP32 internal 8-bit DAC channels.
+ * Invoke this function directly inside messaging.cpp case matches instead of parsing via an xQueue.
+ */
+void updateDACVoltage(const char* identifier, uint32_t rawValue)
 {
-    // UBaseType_t uxHighWaterMark;
-    // uxHighWaterMark = uxTaskGetStackHighWaterMark(NULL);
-    // Serial.print("DAC_task uxTaskGetStackHighWaterMark:");
-    // Serial.println(uxHighWaterMark);
+    // Force constraint to safe 8-bit resolution boundaries (0-255)
+    uint8_t dacValue = constrain(rawValue, 0, 255);
 
-    uint8_t DACvalue;
-
-    for (;;)
+    if (strcmp(identifier, "DIAL1") == 0)
     {
-        messageParts parts;
-
-        //wait for new DAC commands in the queue
-        xQueueReceive(DAC_Queue, &parts, portMAX_DELAY);
-
-        std::string identifier = parts.identifier;
-
-        //Serial << "DAC_Queue: " << identifier.c_str() << endl;
-
-        DACvalue = constrain(parts.value1, 0, 255);
-
-        if (identifier.compare("DIAL1") == 0)
-        {
-            dacWrite(DAC1, DACvalue);
-
-            //Serial << "DAC1: " << DACvalue << endl;
-        }
-        else if (identifier.compare("DIAL2") == 0)
-        {
-            dacWrite(DAC2, DACvalue);
-
-            //Serial << "DAC2: " << DACvalue << endl;
-        }
+        dacWrite(DAC1, dacValue); // Updates internal GPIO pin register instantly
     }
-
-    vTaskDelete(NULL);
+    else if (strcmp(identifier, "DIAL2") == 0)
+    {
+        dacWrite(DAC2, dacValue);
+    }
 }
