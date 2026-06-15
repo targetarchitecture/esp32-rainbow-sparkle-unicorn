@@ -2,6 +2,28 @@
 #include "messaging.h"
 #include <sstream>
 #include <string>
+#include <cstring>
+#include <stdexcept>
+
+/**
+ * @brief Safely converts a string to a 32-bit unsigned integer.
+ * Handles alphabetic strings or overflow values without throwing uncaught exceptions.
+ */
+static uint32_t safe_string_to_uint32(const std::string& str) {
+    if (str.empty()) {
+        return 0;
+    }
+    try {
+        // std::stoul handles unsigned long matching uint32_t bounds on the ESP32 architecture
+        return static_cast<uint32_t>(std::stoul(str));
+    } 
+    catch (const std::invalid_argument& e) {
+        return 0; // Return safe default if the string contains alpha characters
+    } 
+    catch (const std::out_of_range& e) {
+        return 0; // Return safe default if the value overflows the type bounds
+    }
+}
 
 void dealWithMessage(std::string message)
 {
@@ -133,81 +155,61 @@ void dealWithMessage(std::string message)
 
 messageParts processQueueMessage(std::string msg)
 {
-    // Serial << msg.length() << endl;
-
     std::istringstream f(msg);
     std::string part;
 
-    messageParts mParts = {};
+    // Zero-initializes the entire structure automatically (sets strings to "" and values to 0)
+    messageParts mParts = {}; 
     int index = 0;
 
     while (std::getline(f, part, ','))
     {
-        if (index == 0)
+        switch (index)
         {
-            strcpy(mParts.identifier, part.c_str());
-        }
-        if (index == 1)
-        {
-            try
-            {
-                // Serial << msg.c_str() << endl;
-                // Serial << part.c_str() << endl;
+            case 0:
+                // Bounded copy to prevent buffer overflow on identifier[20]
+                strncpy(mParts.identifier, part.c_str(), sizeof(mParts.identifier) - 1);
+                mParts.identifier[sizeof(mParts.identifier) - 1] = '\0';
+                break;
 
-                // Serial << "part.c_str():" << part.c_str() << endl;
+            case 1:
+                mParts.value1 = safe_string_to_uint32(part);
+                // Bounded copy to prevent buffer overflow on part1[100]
+                strncpy(mParts.part1, part.c_str(), sizeof(mParts.part1) - 1);
+                mParts.part1[sizeof(mParts.part1) - 1] = '\0';
+                break;
 
-                mParts.value1 = atoi(part.c_str());
+            case 2:
+                mParts.value2 = safe_string_to_uint32(part);
+                // Bounded copy to prevent buffer overflow on part2[100]
+                strncpy(mParts.part2, part.c_str(), sizeof(mParts.part2) - 1);
+                mParts.part2[sizeof(mParts.part2) - 1] = '\0';
+                break;
 
-                // Serial << "mParts.value1:" << mParts.value1 << endl;
-            }
-            catch (const std::exception &e)
-            {
-                // Serial << "part1 exception:" << mParts.part1 << endl;
-                // strcpy(mParts.part1, part.c_str());
-            }
+            case 3:
+                mParts.value3 = safe_string_to_uint32(part);
+                break;
 
-            // always store the value as a string
-            strcpy(mParts.part1, part.c_str());
+            case 4:
+                mParts.value4 = safe_string_to_uint32(part);
+                break;
 
-            // Serial << "mParts.part1:" << mParts.part1 << endl;
-        }
-        if (index == 2)
-        {
-            try
-            {
-                mParts.value2 = atoi(part.c_str());
-            }
-            catch (const std::exception &e)
-            {
-                // strcpy(mParts.part2, part.c_str());
-                // Serial << "part2 exception:" << mParts.part2 << endl;
-            }
+            case 5:
+                mParts.value5 = safe_string_to_uint32(part);
+                break;
 
-            strcpy(mParts.part2, part.c_str());
+            case 6:
+                mParts.value6 = safe_string_to_uint32(part);
+                break;
 
-            // Serial << "mParts.part2:" << mParts.part2 << endl;
-        }
-        if (index == 3)
-        {
-            mParts.value3 = atoi(part.c_str());
-        }
-        if (index == 4)
-        {
-            mParts.value4 = atoi(part.c_str());
-        }
-        if (index == 5)
-        {
-            mParts.value5 = atoi(part.c_str());
-        }
-        if (index == 6)
-        {
-            mParts.value6 = atoi(part.c_str());
-        }
-        if (index == 7)
-        {
-            mParts.value7 = atoi(part.c_str());
-        }
+            case 7:
+                mParts.value7 = safe_string_to_uint32(part);
+                break;
 
+            default:
+                // Safely drop any extraneous comma-separated parameters exceeding struct fields
+                break;
+        }
         index++;
     }
 
