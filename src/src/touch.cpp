@@ -61,8 +61,6 @@ void touch_task(void *pvParameter)
         // read and set array returning the current touched
         auto currtouched = readAndSetTouchArray();
 
-        // remember last touch
-        lasttouched = currtouched;
     }
 
     vTaskDelete(NULL);
@@ -129,6 +127,9 @@ uint16_t readAndSetTouchArray()
             sendToMicrobit(touchStates);
         }
     }
-
-    return currtouched;
+        // remember last touch
+lasttouched = currtouched; 
+    
+return currtouched;
+    
 }
