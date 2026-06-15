@@ -164,8 +164,12 @@ void microbit_receive_task(void *pvParameters)
 void sendToMicrobit(std::string msg)
 {
     // the queue needs to work with a copy
-    char queuedMsg[MAXBBCMESSAGELENGTH];
-    strcpy(queuedMsg, msg.c_str());
+    //char queuedMsg[MAXBBCMESSAGELENGTH];
+    //strcpy(queuedMsg, msg.c_str());
+
+//15.6.26 - gemini changed it to this
+    strncpy(queuedMsg, msg.c_str(), sizeof(queuedMsg) - 1);
+     queuedMsg[sizeof(queuedMsg) - 1] = '\0';
 
     xQueueSend(Microbit_Transmit_Queue, &queuedMsg, portMAX_DELAY);
 }
