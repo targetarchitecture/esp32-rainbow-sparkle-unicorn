@@ -1,19 +1,23 @@
 #include <Arduino.h>
+#include <cstring>
+#include <sstream>
+#include <algorithm> // Required for std::remove and std::find
 #include "IoT.h"
+#include "messaging.h"
 
 WiFiClient client;
 PubSubClient MQTTClient;
 
-std::string mqtt_server;   //= "192.168.1.189";
-std::string mqtt_user;     // = "public";
-std::string mqtt_password; // = "public";
+std::string mqtt_server;
+std::string mqtt_user;
+std::string mqtt_password;
 
 QueueHandle_t MQTT_Publish_Queue;
 
 struct MessageToPublish
 {
-  char topic[100];
-  char payload[100];
+    char topic[100];
+    char payload[100];
 };
 
 TaskHandle_t MQTTCommandTask;
@@ -24,282 +28,224 @@ volatile bool ConnectSubscriptions = true;
 std::vector<std::string> SubscribedTopics;
 std::vector<std::string> UnsubscribedTopics;
 
+// Mutex to safeguard vector allocations across competing FreeRTOS threads
+static SemaphoreHandle_t vectorMutex = NULL;
+
 void MQTT_setup()
 {
-  MQTT_Publish_Queue = xQueueCreate(10, sizeof(MessageToPublish));
+    MQTT_Publish_Queue = xQueueCreate(10, sizeof(MessageToPublish));
+    vectorMutex = xSemaphoreCreateMutex();
 
-  //read from NVM
-  //preferences.putString("mqtt_server", "robotmqtt");
-  mqtt_server = preferences.getString("mqtt_server", "").c_str();
-  mqtt_user = preferences.getString("mqtt_user", "public").c_str();
-  mqtt_password = preferences.getString("mqtt_password", "public").c_str();
+    // Pull configurations securely out of Non-Volatile Storage (Preferences)
+    mqtt_server = preferences.getString("mqtt_server", "").c_str();
+    mqtt_user = preferences.getString("mqtt_user", "public").c_str();
+    mqtt_password = preferences.getString("mqtt_password", "public").c_str();
 
-  Serial << "MQTT Server from NVM:" << mqtt_server.c_str() << "\r\n"; //endl;
+    Serial << "MQTT Server from NVM: " << mqtt_server.c_str() << "\r\n";
 
-  //if value not set then just bail out
-  if (mqtt_server == "")
-  {
-     Serial << "MQTT Server not set" << endl;
+    if (mqtt_server.empty())
+    {
+        Serial << "MQTT Server not set. Exiting MQTT configuration." << endl;
+        return;
+    }
 
-    return;
-  }
+    MQTTClient.setClient(client);
+    MQTTClient.setServer(mqtt_server.c_str(), 1883);
+    MQTTClient.setCallback(recieveMessage);
 
-  //set this up as early as possible
-  MQTTClient.setClient(client);
-  MQTTClient.setServer(mqtt_server.c_str(), 1883);
-  MQTTClient.setCallback(recieveMessage);
+    xTaskCreatePinnedToCore(
+        MQTT_command_task,   
+        "MQTT Command Task", 
+        3072,                // Incremented slightly to support safe string stream operations safely
+        NULL,                
+        MQTT_task_Priority,  
+        &MQTTCommandTask,    
+        1);
 
-  xTaskCreatePinnedToCore(
-      MQTT_command_task,   /* Task function. */
-      "MQTT Command Task", /* name of task. */
-      2046,                /* Stack size of task (uxTaskGetStackHighWaterMark:1336) */
-      NULL,                /* parameter of the task */
-      MQTT_task_Priority,  /* priority of the task */
-      &MQTTCommandTask,    /* Task handle to keep track of created task */
-      1);
-
-  xTaskCreatePinnedToCore(
-      MQTT_Publish_task,         /* Task function. */
-      "MQTT Publish Task",       /* name of task. */
-      5000,                      /* Stack size of task (uxTaskGetStackHighWaterMark:16084) */
-      NULL,                      /* parameter of the task */
-      MQTT_client_task_Priority, /* priority of the task */
-      &MQTTPublishTask,          /* Task handle to keep track of created task */
-      1);
+    xTaskCreatePinnedToCore(
+        MQTT_Publish_task,         
+        "MQTT Publish Task",       
+        4096,                      // Optimized stack frame footprint
+        NULL,                      
+        MQTT_client_task_Priority, 
+        &MQTTPublishTask,          
+        1);
 }
 
 void recieveMessage(char *topic, byte *payload, unsigned int length)
 {
-  //Serial << "Message arrived [" << topic << "]" << endl;
+    std::string receivedMsg;
+    receivedMsg.reserve(length);
 
-  std::string receivedMsg;
+    for (unsigned int i = 0; i < length; i++)
+    {
+        receivedMsg += (char)payload[i];
+    }
 
-  for (int i = 0; i < length; i++)
-  {
-    char c = payload[i];
-
-    //Serial.print(c);
-
-    receivedMsg += c;
-  }
-  //Serial.println();
-
-  char msgtosend[MAXBBCMESSAGELENGTH];
-  sprintf(msgtosend, "MQTT:'%s','%s'", topic, receivedMsg.c_str());
-  sendToMicrobit(msgtosend);
+    // Preserve structural token matching expected by MakeCode split('',''): MQTT:'topic','payload'
+    char msgtosend[MAXBBCMESSAGELENGTH];
+    snprintf(msgtosend, sizeof(msgtosend), "MQTT:'%s','%s'", topic, receivedMsg.c_str());
+    sendToMicrobit(msgtosend);
 }
 
 void checkMQTTconnection()
 {
-  Serial.println("MQTTClient NOT Connected :(");
-  u_long startTime = millis();
+    if (MQTTClient.connected()) return;
 
-  do
-  {
-    if (MQTTClient.connected() == true)
-    {
-      break;
-    }
+    Serial.println("MQTTClient NOT Connected. Attempting broker connection...");
 
-    //get the unique id into a variable
     String wifiMacString = WiFi.macAddress();
-    std::string mqtt_client = BOARDNAME; 
-    mqtt_client = mqtt_client + "_" + wifiMacString.c_str();
+    std::string mqtt_client = std::string(BOARDNAME) + "_" + wifiMacString.c_str();
 
     Serial << mqtt_client.c_str() << ":" << mqtt_user.c_str() << ":" << mqtt_password.c_str() << endl;
 
-    MQTTClient.connect(mqtt_client.c_str(), mqtt_user.c_str(), mqtt_password.c_str());
-
-    delay(500);
-
-  } while (1);
-
-  Serial << "MQTTClient now connected in " << millis() - startTime << "ms :)" << endl;
-
-  //Serial.println("MQTTClient now connected :)");
-
-  //set to true to get the subscriptions setup again
-  ConnectSubscriptions = true;
+    // Execute single connection attempt per loop step instead of locking up the thread context
+    if (MQTTClient.connect(mqtt_client.c_str(), mqtt_user.c_str(), mqtt_password.c_str()))
+    {
+        Serial.println("MQTTClient successfully connected.");
+        ConnectSubscriptions = true; // Signal topic subscription re-synchronization
+    }
 }
 
 void setupSubscriptions()
 {
-  // Serial.print("setupSubscriptions");
+    if (vectorMutex == NULL) return;
 
-  // Serial << "SubscribedTopics =" << SubscribedTopics.size() << endl;
+    if (xSemaphoreTake(vectorMutex, pdMS_TO_TICKS(50)) == pdTRUE)
+    {
+        // Process active subscriptions
+        for (size_t i = 0; i < SubscribedTopics.size(); i++)
+        {
+            Serial << "Subscribing to: " << SubscribedTopics[i].c_str() << endl;
+            MQTTClient.subscribe(SubscribedTopics[i].c_str());
+        }
 
-  for (int i = 0; i < SubscribedTopics.size(); i++)
-  {
-    Serial << "subscribing to:" << SubscribedTopics[i].c_str() << endl;
+        // Process outstanding unsubscriptions
+        for (size_t i = 0; i < UnsubscribedTopics.size(); i++)
+        {
+            Serial << "Unsubscribing from: " << UnsubscribedTopics[i].c_str() << endl;
+            MQTTClient.unsubscribe(UnsubscribedTopics[i].c_str());
+        }
+        UnsubscribedTopics.clear(); // Clear out actioned arrays markers
 
-    MQTTClient.subscribe(SubscribedTopics[i].c_str());
-  }
-
-  for (int i = 0; i < UnsubscribedTopics.size(); i++)
-  {
-    Serial << "unsubscribing to:" << UnsubscribedTopics[i].c_str() << endl;
-
-    MQTTClient.unsubscribe(UnsubscribedTopics[i].c_str());
-  }
+        xSemaphoreGive(vectorMutex);
+    }
 }
 
 void MQTT_Publish_task(void *pvParameter)
 {
-  // UBaseType_t uxHighWaterMark;
-  // uxHighWaterMark = uxTaskGetStackHighWaterMark(NULL);
-  // Serial.print("MQTT_Publish_task uxTaskGetStackHighWaterMark:");
-  // Serial.println(uxHighWaterMark);
-
-  for (;;)
-  {
-    if (WiFi.isConnected() == false)
+    for (;;)
     {
-      //  Serial.println("WiFi.isConnected() == false");
-
-      delay(500);
-    }
-    else
-    {
-      if (MQTTClient.connected() == false)
-      {
-        // Serial.println("checkMQTTconnection");
-
-        checkMQTTconnection();
-      }
-      else
-      {
-        //check to see if we need to remake the subscriptions
-        if (ConnectSubscriptions == true)
+        if (!WiFi.isConnected())
         {
-          //   Serial.println("ConnectSubscriptions == true");
+            vTaskDelay(pdMS_TO_TICKS(500));
+            continue;
+        }
 
-          //set up subscription topics
-          setupSubscriptions();
+        if (!MQTTClient.connected())
+        {
+            checkMQTTconnection();
+            vTaskDelay(pdMS_TO_TICKS(1000)); // Paced re-evaluation spacing checkpoint
+            continue;
+        }
 
-          ConnectSubscriptions = false;
+        // Re-establish network topic links if newly connected
+        if (ConnectSubscriptions)
+        {
+            setupSubscriptions();
+            ConnectSubscriptions = false;
         }
 
         MessageToPublish msg;
-
-        //check the message queue and if empty just proceed passed
+        // Non-blocking drain of outbound messaging elements
         if (xQueueReceive(MQTT_Publish_Queue, &msg, 0) == pdTRUE)
         {
-          // Serial.print("publish topic:");
-          // Serial.print(msg.topic);
-          // Serial.print("\t");
-          // Serial.print("payload:");
-          // Serial.print(msg.payload);
-          // Serial.println("");
-
-          MQTTClient.publish(msg.topic, msg.payload);
+            MQTTClient.publish(msg.topic, msg.payload);
         }
 
-        //Serial.println("MQTTClient.loop()");
-
-        //must always call the loop method - if we have wifi and a connection
         MQTTClient.loop();
-      }
-
-      delay(100);
+        vTaskDelay(pdMS_TO_TICKS(20)); // Streamlined 50Hz scheduling pacing step
     }
-  }
-  vTaskDelete(NULL);
 }
 
 void MQTT_command_task(void *pvParameter)
 {
-  // UBaseType_t uxHighWaterMark;
-  // uxHighWaterMark = uxTaskGetStackHighWaterMark(NULL);
-  // Serial.print("MQTT_command_task uxTaskGetStackHighWaterMark:");
-  // Serial.println(uxHighWaterMark);
-
-  for (;;)
-  {
-    messageParts parts;
-
-    //wait for new MQTT command in the queue
-    xQueueReceive(MQTT_Command_Queue, &parts, portMAX_DELAY);
-
-    //Serial.print("MQTT_Command_Queue:");
-    //Serial.println(parts.identifier);
-
-    std::string identifier = parts.identifier;
-
-    if (identifier.compare("PUBLISH") == 0)
+    for (;;)
     {
-      struct MessageToPublish msg;
-      std::istringstream f(parts.part1);
-      std::string part;
-      int index = 0;
+        messageParts parts;
+        // Block until the micro:bit issues an IoT command via UART
+        xQueueReceive(MQTT_Command_Queue, &parts, portMAX_DELAY);
 
-      while (std::getline(f, part, '|'))
-      {
-        if (index == 0)
+        std::string identifier = parts.identifier;
+
+        if (identifier.compare("PUBLISH") == 0)
         {
-          strcpy(msg.topic, part.c_str());
+            struct MessageToPublish msg = {};
+            std::istringstream f(parts.part1);
+            std::string part;
+            int index = 0;
+
+            // Split parameters divided by pipe characters ('|')
+            while (std::getline(f, part, '|'))
+            {
+                if (index == 0)
+                {
+                    strncpy(msg.topic, part.c_str(), sizeof(msg.topic) - 1);
+                    msg.topic[sizeof(msg.topic) - 1] = '\0';
+                }
+                else if (index == 1)
+                {
+                    strncpy(msg.payload, part.c_str(), sizeof(msg.payload) - 1);
+                    msg.payload[sizeof(msg.payload) - 1] = '\0';
+                }
+                index++;
+            }
+
+            xQueueSend(MQTT_Publish_Queue, &msg, portMAX_DELAY);
         }
-        if (index == 1)
+        else if (identifier.compare("SUBSCRIBE") == 0)
         {
-          strcpy(msg.payload, part.c_str());
+            subscribe(parts.part1);
         }
-        index++;
-      }
-
-      // Serial.print("queue message:");
-      // Serial.print(msg.topic);
-      // Serial.print("\t");
-      // Serial.print("payload:");
-      // Serial.println(msg.payload);
-
-      xQueueSend(MQTT_Publish_Queue, &msg, portMAX_DELAY);
+        else if (identifier.compare("UNSUBSCRIBE") == 0)
+        {
+            unsubscribe(parts.part1);
+        }
     }
-    else if (identifier.compare("SUBSCRIBE") == 0)
-    {
-      std::string topic = parts.part1;
-      //  strcpy(topic, parts.part1);
-
-      //Serial << "Subscribe topic:" << topic.c_str() << endl;
-
-      subscribe(topic);
-    }
-    else if (identifier.compare("UNSUBSCRIBE") == 0)
-    {
-      std::string topic = parts.part1;
-
-      unsubscribe(topic);
-    }
-  }
-
-  vTaskDelete(NULL);
 }
 
 void unsubscribe(std::string topic)
 {
-  //Serial << "UnsubscribedTopics =" << SubscribedTopics.size() << endl;
+    if (vectorMutex == NULL) return;
 
-  // char t[100];
-  // strcpy(t, topic);
-
-  UnsubscribedTopics.push_back(topic);
-
-  //Serial << "UnsubscribedTopics =" << SubscribedTopics.size() << endl;
-
-  //set to true to get the subscriptions setup again
-  ConnectSubscriptions = true;
+    if (xSemaphoreTake(vectorMutex, portMAX_DELAY) == pdTRUE)
+    {
+        UnsubscribedTopics.push_back(topic);
+        
+        // Evict matching tracking tokens cleanly out of standard active allocations array
+        SubscribedTopics.erase(
+            std::remove(SubscribedTopics.begin(), SubscribedTopics.end(), topic), 
+            SubscribedTopics.end()
+        );
+        
+        xSemaphoreGive(vectorMutex);
+        ConnectSubscriptions = true;
+    }
 }
 
 void subscribe(std::string topic)
 {
-  //Serial << "Subscribe cmd:" << topic.c_str() << endl;
+    if (vectorMutex == NULL) return;
 
-  // char t[100];
-
-  // strcpy(t, topic);
-
-  SubscribedTopics.push_back(topic);
-
-  // Serial << "SubscribedTopics =" << SubscribedTopics.size() << endl;
-
-  //set to true to get the subscriptions setup again
-  ConnectSubscriptions = true;
+    if (xSemaphoreTake(vectorMutex, portMAX_DELAY) == pdTRUE)
+    {
+        // Prevent storing duplicates if micro:bit runs subscription blocks in loops
+        if (std::find(SubscribedTopics.begin(), SubscribedTopics.end(), topic) == SubscribedTopics.end())
+        {
+            SubscribedTopics.push_back(topic);
+        }
+        
+        xSemaphoreGive(vectorMutex);
+        ConnectSubscriptions = true;
+    }
 }
