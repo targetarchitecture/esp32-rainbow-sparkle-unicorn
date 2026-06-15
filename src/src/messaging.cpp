@@ -48,7 +48,8 @@ void dealWithMessage(std::string message)
     }
     else if (identifier.compare("DIAL1") == 0 || identifier.compare("DIAL2") == 0)
     {
-        xQueueSend(DAC_Queue, &queuedMsg, portMAX_DELAY);
+        //xQueueSend(DAC_Queue, &queuedMsg, portMAX_DELAY);
+        updateDACVoltage(identifier.c_str(), queuedMsg.value1);
     }
     else if (identifier.compare("MSTOP") == 0 || identifier.compare("MANGLE") == 0 ||
              identifier.compare("MLINEAR") == 0 || identifier.compare("MSMOOTH") == 0 ||
