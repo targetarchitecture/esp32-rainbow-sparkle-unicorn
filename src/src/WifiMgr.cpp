@@ -11,21 +11,20 @@ void WiFiEvent(WiFiEvent_t event)
         case ARDUINO_EVENT_WIFI_READY:
             Serial.println("WiFi interface ready.");
             break;
-        case ARDUINO_EVENT_STA_START:
+        case ARDUINO_EVENT_WIFI_STA_START:
             Serial.println("WiFi client station engine started.");
             break;
-        case ARDUINO_EVENT_STA_CONNECTED:
+        case ARDUINO_EVENT_WIFI_STA_CONNECTED:
             Serial.println("Associated with access point.");
             break;
-        case ARDUINO_EVENT_STA_DISCONNECTED:
+        case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
             Serial.println("Disconnected from WiFi. Initiating background retry...");
-            // Non-blocking auto reconnect mechanism
             WiFi.begin(storedSSID.c_str(), storedWifiPassword.c_str());
             break;
-        case ARDUINO_EVENT_STA_GOT_IP:
+        case ARDUINO_EVENT_WIFI_STA_GOT_IP:
             Serial.printf("Obtained IP configuration: %s at %dms\n", WiFi.localIP().toString().c_str(), millis());
             break;
-        case ARDUINO_EVENT_STA_LOST_IP:
+        case ARDUINO_EVENT_WIFI_STA_LOST_IP:
             Serial.println("IP lease expired or dropped.");
             break;
         default:

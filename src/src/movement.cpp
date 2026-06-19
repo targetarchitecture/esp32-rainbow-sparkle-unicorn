@@ -152,7 +152,9 @@ void movement_i2c_task(void *pvParameters)
 
 void setServoPWM(const uint8_t pin, const uint16_t PWM)
 {
-    servoPWM toBeQueued = {pin, PWM};
+    servoPWM toBeQueued;
+    toBeQueued.pin = pin;
+    toBeQueued.pwm = PWM;
     xQueueSend(Movement_i2c_Queue, &toBeQueued, portMAX_DELAY);
 }
 

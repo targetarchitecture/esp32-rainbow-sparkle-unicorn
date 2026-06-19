@@ -44,17 +44,17 @@ void switch_task(void *pvParameters)
 
 std::string readAndSetSwitchArray()
 {
-    xSemaphoreTake(i2cSemaphore, portMAX_DELAY);
-    // Execute single 16-bit transaction reading all pins instantly
-    uint16_t pinDataWord = switches.readWord(0x12); 
-    xSemaphoreGive(i2cSemaphore);
-
     std::string switchStates = "";
+    switchStates.reserve(16);
+
+    xSemaphoreTake(i2cSemaphore, portMAX_DELAY);
     for (size_t i = 0; i < 16; i++)
     {
-        bool isLow = (pinDataWord & (1 << i)) == 0;
-        switchArray[i] = isLow ? LOW : HIGH;
-        switchStates.append(isLow ? "L" : "H");
+        int val = switches.digitalRead(i);
+        switchArray[i] = val;
+        switchStates.append(val == LOW ? "L" : "H");
     }
+    xSemaphoreGive(i2cSemaphore);
+
     return switchStates;
 }

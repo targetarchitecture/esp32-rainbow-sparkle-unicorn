@@ -52,5 +52,6 @@
         "memory_resource": "cpp",
         "optional": "cpp",
         "string_view": "cpp"
-    }
+    },
+    "idf.currentSetup": "C:\\Espressif\\.espressif\\v5.4.3\\esp-idf"
 }

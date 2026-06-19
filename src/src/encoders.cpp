@@ -7,7 +7,8 @@ ESP32Encoder encoder2;
 // Volatile allocations mapping dropped completely; live lookups execute via hardware registers
 void encoders_setup()
 {
-    ESP32Encoder::useInternalWeakPullResistors = DOWN;
+// Scoped enum reference resolves definition mapping errors
+    ESP32Encoder::useInternalWeakPullResistors = puType::DOWN;
 
     encoder1.attachHalfQuad(ROTARY1CK, ROTARY1DT);
     encoder1.clearCount();
